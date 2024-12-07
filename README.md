@@ -1,49 +1,91 @@
-[![Gitter chat](https://badges.gitter.im/gitterHQ/gitter.png)](https://gitter.im/big-data-europe/Lobby)
-
-# docker-hive
-
-This is a docker container for Apache Hive 2.3.2. It is based on https://github.com/big-data-europe/docker-hadoop so check there for Hadoop configurations.
-This deploys Hive and starts a hiveserver2 on port 10000.
-Metastore is running with a connection to postgresql database.
-The hive configuration is performed with HIVE_SITE_CONF_ variables (see hadoop-hive.env for an example).
-
-To run Hive with postgresql metastore:
-```
-    docker-compose up -d
+## Prerequisites
+1. Ensure you have the following installed:
+   - Python
+   - Docker
+   - Node.js (You can alternatively use bun, pnpm, etc.)
+<br>
+2. Clone the repository:
+```bash
+git clone [repository_url]
+cd [repository_name]
 ```
 
-To deploy in Docker Swarm:
-```
-    docker stack deploy -c docker-compose.yml hive
+## Step 1: Start the Hive Server
+### Step 1.1: Start Hive Server
+Go to `docker-hive` directory, and run `docker-compose up -d` to run the containers
+
+### Step 1.2: Get HDFS ready
+Run to connect to the namenode
+```bash
+docker exec -it <namenode_container_id> /bin/bash
 ```
 
-To run a PrestoDB 0.181 with Hive connector:
-
-```
-  docker-compose up -d presto-coordinator
-```
-
-This deploys a Presto server listens on port `8080`
-
-## Testing
-Load data into Hive:
-```
-  $ docker-compose exec hive-server bash
-  # /opt/hive/bin/beeline -u jdbc:hive2://localhost:10000
-  > CREATE TABLE pokes (foo INT, bar STRING);
-  > LOAD DATA LOCAL INPATH '/opt/hive/examples/files/kv1.txt' OVERWRITE INTO TABLE pokes;
+then run inside the name-node container
+```bash
+hdfs dfs -mkdir -p /user/hive/warehouse
+hdfs dfs -chmod -R 777 /user/hive/warehouse
 ```
 
-Then query it from PrestoDB. You can get [presto.jar](https://prestosql.io/docs/current/installation/cli.html) from PrestoDB website:
-```
-  $ wget https://repo1.maven.org/maven2/io/prestosql/presto-cli/308/presto-cli-308-executable.jar
-  $ mv presto-cli-308-executable.jar presto.jar
-  $ chmod +x presto.jar
-  $ ./presto.jar --server localhost:8080 --catalog hive --schema default
-  presto> select * from pokes;
+### Step 1.3: Transfer your data (.csv/.ssv/.tsv) into HDFS
+Run to copy data from your local to your `hive-server` container
+```bash
+docker cp /path/to/yourfile.csv <hive-server_container_id>:/tmp/yourfile.csv
 ```
 
-## Contributors
-* Ivan Ermilov [@earthquakesan](https://github.com/earthquakesan) (maintainer)
-* Yiannis Mouchakis [@gmouchakis](https://github.com/gmouchakis)
-* Ke Zhu [@shawnzhu](https://github.com/shawnzhu)
+### Step 1.4: Login to hive-container and put the copied data into HDFS
+Run in a new terminal
+```bash
+docker exec -it <hive-server_container_id> /bin/bash
+```
+
+Put the data in HDFS
+```bash
+hdfs dfs -mkdir -p /user/hive/warehouse/your_table
+hdfs dfs -put /tmp/yourfile.csv /user/hive/warehouse/your_table/
+```
+
+### Step 1.4: Create the table in Hive
+First connect to the hive interface
+```bash
+$ hive
+```
+
+Create the table by running the SQL query. Make sure to edit the query as per your need.
+```sql
+CREATE EXTERNAL TABLE your_table (
+    column_1 DATE,
+    column_2 FLOAT,
+    column_3 FLOAT,
+    column_4 FLOAT,
+    column_5 FLOAT
+)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.lazy.LazySimpleSerDe'
+WITH SERDEPROPERTIES (
+    "serialization.format" = ",",
+    "field.delim" = ","
+)
+STORED AS TEXTFILE
+LOCATION '/user/hive/warehouse/your_table/'
+TBLPROPERTIES ("skip.header.line.count"="1");
+```
+
+### Step 1.5: Connect to the hive server from backend server
+After doing the step 1.4 your table and data set up. You can connect to the hive server after this. You can use the following python snippet for reference.
+
+```python
+from pyhive import hive
+
+conn = hive.Connection(
+    host='localhost', 
+    port=10000, 
+    username='your_user', 
+    database='default'
+)
+
+cursor = conn.cursor()
+cursor.execute('SELECT * FROM discover_findata LIMIT 10')
+results = cursor.fetchall()
+
+for row in results:
+    print(row)
+```
